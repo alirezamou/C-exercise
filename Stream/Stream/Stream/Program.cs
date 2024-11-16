@@ -3,8 +3,8 @@ using System.Text;
 
 public class Program
 {
-    public static readonly string seperator = "%end%";
-    public static readonly byte[] encodedSeperator = Encoding.UTF8.GetBytes("%end%");
+    const int FILE_LENGTH = 8;
+    const string TARGET_ZIPPED_FILE_PATH = @"c:\temp\target.gzip";
 
     public static void Main(string[] args)
     {
@@ -21,37 +21,74 @@ public class Program
             @"c:\temp\file09.txt",
             @"c:\temp\file10.txt",
         };
-        WriteTenFilesIntoOneCompressedFile(filePaths);
-        //ReadAndWriteCompressedFile();
+        Compress(filePaths);
+        Decompress();
     }
 
-    public static void WriteTenFilesIntoOneCompressedFile(List<string> paths)
+    public static void Compress(List<string> paths)
     {
-        using var compressorStream = new GZipStream(File.Open(@"c:\temp\target.gzip", FileMode.OpenOrCreate), CompressionLevel.SmallestSize, false);
-        foreach (var path in paths)
+        if (paths.Count == 0)
         {
-            using var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read);
-            fileStream.CopyTo(compressorStream);
-            compressorStream.Write(encodedSeperator);
+            Console.WriteLine("NO File provided");
+            return;
         }
 
+        using var compressorStream = new GZipStream(File.Open(TARGET_ZIPPED_FILE_PATH, FileMode.OpenOrCreate), CompressionLevel.SmallestSize, false);
+
+        foreach (var path in paths)
+        {
+            if (!File.Exists(path)) continue;
+
+            using var file = File.Open(path, FileMode.Open);
+            byte[] fileLengthBuffer = new byte[FILE_LENGTH];
+            var fileLength = (int)file.Length;
+            var encodedFileLength = Encoding.UTF8.GetBytes(fileLength.ToString());
+            encodedFileLength.CopyTo(fileLengthBuffer, 0);
+            compressorStream.Write(fileLengthBuffer, 0, FILE_LENGTH);
+            file.CopyTo(compressorStream);
+        }
     }
 
-    public static void ReadAndWriteCompressedFile()
+    public static void Decompress()
     {
-        using var compressed = File.Open(@"c:\temp\target.gzip", FileMode.Open);
+        var targetFilePath = TARGET_ZIPPED_FILE_PATH;
+        if (!File.Exists(targetFilePath))
+        {
+            Console.WriteLine("No zipped file provided");
+            return;
+        }
+
+        using var compressed = File.Open(targetFilePath, FileMode.Open);
         using var decompressorStream = new GZipStream(compressed, CompressionMode.Decompress);
-        using var origStream = new MemoryStream();
 
-        decompressorStream.CopyTo(origStream);
+        byte[] buffer;
+        byte[] fileLengthBuffer = new byte[FILE_LENGTH];
+        int fileLength = 0;
+        int readBytes = 0;
+        int fileIndex = 1;
 
-        var allContent = "";
-        origStream.Position = 0;
-        var buffer = new byte[1024];
-        while (origStream.Read(buffer) > 0)
-            allContent += Encoding.UTF8.GetString(buffer);
-        var fileContents = allContent.Split("%end%");
-        foreach (var file in fileContents)
-            Console.WriteLine(file);
+        while (true)
+        {
+            if (!decompressorStream.CanRead) break;
+
+            readBytes = decompressorStream.Read(fileLengthBuffer, 0, FILE_LENGTH);
+            if (readBytes <= 0) break;
+            if (!int.TryParse(Encoding.UTF8.GetString(fileLengthBuffer), out fileLength)) break;
+
+            buffer = new byte[fileLength];
+            readBytes = decompressorStream.Read(buffer, 0, fileLength);
+
+            if (readBytes <= 0) break;
+
+            var filePath = $"c:\\temp\\output-{fileIndex}.txt";
+            var fileExists = File.Exists(filePath);
+
+            using (var fileToWrite = File.Open(filePath, fileExists ? FileMode.Truncate : FileMode.OpenOrCreate, FileAccess.Write))
+            {
+                fileToWrite.Write(buffer, 0, fileLength);
+            }
+
+            fileIndex++;
+        }
     }
 }
